@@ -21,8 +21,9 @@ import { IsometricRoom, type IsometricRoomHandle } from "@/components/IsometricR
 import { FloorPlan2D } from "@/components/FloorPlan2D";
 import { useAssets, useSalas } from "@/hooks/use-assets";
 import { SalaFormDialog } from "@/components/SalaFormDialog";
-import { store, maskIp, onlyDigits, isValidIp, type AssetKind } from "@/lib/asset-store";
+import { store, maskIp, onlyDigits, isValidIp, findFreeCell, type AssetKind } from "@/lib/asset-store";
 import { history, useCanUndo } from "@/lib/history";
+import { useMinhasPermissoes } from "@/lib/permissions";
 import { focusBus } from "@/lib/focus-bus";
 import { downloadCsv, printReport, type ReportInput } from "@/lib/report";
 import { useSettings } from "@/lib/settings";
@@ -80,18 +81,39 @@ export const Route = createFileRoute("/_authenticated/salas/$salaId")({
 
 const TIPOS: AssetKind[] = ["desktop", "notebook", "servidor", "switch", "impressora"];
 
+function menuPos(x: number, y: number) {
+  return {
+    x: Math.max(8, Math.min(x, window.innerWidth - 228)),
+    y: Math.max(8, Math.min(y, window.innerHeight - 168)),
+  };
+}
+
 function MicroView() {
   const { salaId } = Route.useParams();
   const navigate = useNavigate();
   const role = useRole();
   const isAdmin = role === "admin";
   const editMode = useEditMode();
-  const canEdit = isAdmin && editMode;
+  const perms = useMinhasPermissoes();
+  const canMove = perms.mover && editMode;
+  const canEditInfo = perms.editar;
+  const canDelete = perms.excluir;
+  const canTransfer = perms.transferir;
+  const canMutate = perms.mover || perms.editar || perms.excluir || perms.transferir;
   const assets = useAssets();
   const salas = useSalas();
   const cfg = useSettings();
   const canUndo = useCanUndo();
-  const sala = salas.find((s) => s.id === salaId) ?? salas[0]!;
+  const salaEncontrada = salas.find((s) => s.id === salaId) ?? salas[0];
+  const sala = salaEncontrada ?? {
+    id: "_vazia",
+    nome: "",
+    numero: "",
+    andar: "",
+    catalogo: "Térreo" as const,
+    largura: 8,
+    profundidade: 8,
+  };
 
   const [mode, setMode] = useState<"3d" | "2d">("3d");
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -133,19 +155,25 @@ function MicroView() {
   const handleRelocate = useCallback(
     (id: string, x: number, z: number) => {
       const before = store.getAssets().find((p) => p.id === id);
+      if (!before) return;
+      if (before.salaId === sala.id && Math.abs(before.x - x) < 0.01 && Math.abs(before.z - z) < 0.01) return;
+      const occupied = store
+        .getAssets()
+        .some((a) => a.id !== id && a.salaId === sala.id && Math.abs(a.x - x) < 0.5 && Math.abs(a.z - z) < 0.5);
+      if (occupied) {
+        toast("Posição ocupada", { description: "Já existe um equipamento nesta célula da grade." });
+        return;
+      }
       store.relocate(id, sala.id, x, z);
       setDirty(true);
-      const a = store.getAssets().find((p) => p.id === id);
-      if (before) {
-        const { salaId: oldSala, x: ox, z: oz } = before;
-        history.record(
-          "move",
-          `Ativo ${before.codigo} movido para ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m)`,
-          () => store.relocate(id, oldSala, ox, oz),
-        );
-      }
+      const { salaId: oldSala, x: ox, z: oz } = before;
+      history.record(
+        "move",
+        `Ativo ${before.codigo} movido para ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m)`,
+        () => store.relocate(id, oldSala, ox, oz),
+      );
       toast("Realocação salva", {
-        description: `${a?.codigo} alinhado à grade em ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m).`,
+        description: `${before.codigo} ficou em ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m). A posição continua depois de atualizar a página.`,
       });
     },
     [sala.id, sala.nome],
@@ -153,9 +181,9 @@ function MicroView() {
 
   const salvarLayout = useCallback(() => {
     setDirty(false);
-    history.clear();
+    history.clearUndo();
     toast("Alterações salvas", {
-      description: `O mapeamento de ${sala.nome} foi consolidado para todos os usuários.`,
+      description: `As posições de ${sala.nome} já estão gravadas neste navegador. A fila de desfazer desta sessão foi encerrada.`,
     });
   }, [sala.nome]);
 
@@ -172,22 +200,35 @@ function MicroView() {
     () =>
       focusBus.subscribe((id) => {
         const alvo = store.getAssets().find((a) => a.id === id);
-        if (!alvo) return;
-        if (alvo.salaId !== sala.id) {
-          void navigate({ to: "/salas/$salaId", params: { salaId: alvo.salaId } });
-          focusBus.request(id);
-          return;
-        }
+        if (!alvo || alvo.salaId !== sala.id) return false;
         setSelectedId(id);
         setFocusId(id);
         setTimeout(() => setFocusId(null), 120);
+        return true;
       }),
-    [sala.id, navigate],
+    [sala.id],
   );
 
   useEffect(() => {
+    setDirty(false);
+    setSelectedId(null);
+    setCtxMenu(null);
+    setPos(null);
+  }, [sala.id]);
+
+  useEffect(() => {
+    if (!salaEncontrada || salaEncontrada.id === salaId) return;
+    void navigate({ to: "/salas/$salaId", params: { salaId: salaEncontrada.id }, replace: true });
+  }, [salaEncontrada, salaId, navigate]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      const alvo = e.target;
+      if (alvo instanceof HTMLElement) {
+        const tag = alvo.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || alvo.isContentEditable) return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
       }
@@ -203,29 +244,14 @@ function MicroView() {
   }, []);
 
   const handleContextMenu = useCallback((id: string, x: number, y: number) => {
-    setCtxMenu({ kind: "asset", id, x, y });
+    const p = menuPos(x, y);
+    setCtxMenu({ kind: "asset", id, x: p.x, y: p.y });
   }, []);
 
   const handleContextEmpty = useCallback((cx: number, cz: number, x: number, y: number) => {
-    setCtxMenu({ kind: "empty", cx, cz, x, y });
+    const p = menuPos(x, y);
+    setCtxMenu({ kind: "empty", cx, cz, x: p.x, y: p.y });
   }, []);
-
-  /** Primeira célula livre da sala — usada quando não há coordenada clicada. */
-  const freeCell = useCallback(() => {
-    const ocupadas = store.getAssets().filter((a) => a.salaId === sala.id);
-    const lx = Math.floor(sala.largura / 2);
-    const lz = Math.floor(sala.profundidade / 2);
-    for (let z = -lz; z < lz; z++) {
-      for (let x = -lx; x < lx; x++) {
-        const px = x + 0.5;
-        const pz = z + 0.5;
-        if (!ocupadas.some((a) => Math.abs(a.x - px) < 0.5 && Math.abs(a.z - pz) < 0.5)) {
-          return { x: px, z: pz };
-        }
-      }
-    }
-    return { x: 0.5, z: 0.5 };
-  }, [sala.id, sala.largura, sala.profundidade]);
 
   const openCreateAt = (cx: number, cz: number) => {
     setPos({ x: cx, z: cz });
@@ -249,7 +275,7 @@ function MicroView() {
     const ocupadas = store.getAssets().filter((a) => a.salaId === moveTarget);
     const lx = Math.floor((destino?.largura ?? 10) / 2);
     const lz = Math.floor((destino?.profundidade ?? 10) / 2);
-    let alvo = { x: 0.5, z: 0.5 };
+    let alvo: { x: number; z: number } | null = null;
     outer: for (let z = -lz; z < lz; z++) {
       for (let x = -lx; x < lx; x++) {
         const px = x + 0.5;
@@ -260,6 +286,10 @@ function MicroView() {
         }
       }
     }
+    if (!alvo) {
+      toast("Sala sem espaço", { description: `${destino?.nome ?? "O destino"} não tem células livres na grade.` });
+      return;
+    }
     const id = moveAssetId;
     const { salaId: oldSala, x: ox, z: oz } = before;
     store.relocate(id, moveTarget, alvo.x, alvo.z);
@@ -269,7 +299,9 @@ function MicroView() {
     );
     setMoveAssetId(null);
     setSelectedId(null);
-    toast("Ativo transferido", { description: `${before.codigo} agora está em ${destino?.nome}.` });
+    toast("Ativo transferido", {
+      description: `${before.codigo} agora está em ${destino?.nome}. A sala continua depois de atualizar a página.`,
+    });
   };
 
   const openEdit = (id: string) => {
@@ -288,6 +320,10 @@ function MicroView() {
     }
     if (!isValidIp(editForm.ip)) {
       toast("Endereço IP inválido.");
+      return;
+    }
+    if (store.isTaken("ip", editForm.ip, editAssetId)) {
+      toast("Esse endereço IP já está em uso.");
       return;
     }
     const before = store.getAssets().find((p) => p.id === editAssetId);
@@ -318,8 +354,29 @@ function MicroView() {
       toast("Endereço IP inválido.");
       return;
     }
+    if (store.isTaken("codigo", form.codigo)) {
+      toast("Já existe um patrimônio com esse código.");
+      return;
+    }
+    if (store.isTaken("ip", form.ip)) {
+      toast("Esse endereço IP já está em uso.");
+      return;
+    }
+    if (pos) {
+      const occupied = store
+        .getAssets()
+        .some((a) => a.salaId === sala.id && Math.abs(a.x - pos.x) < 0.5 && Math.abs(a.z - pos.z) < 0.5);
+      if (occupied) {
+        toast("Posição ocupada", { description: "Escolha outra célula da grade." });
+        return;
+      }
+    }
 
-    const destino = pos ?? freeCell();
+    const destino = pos ?? findFreeCell(sala);
+    if (!destino) {
+      toast("Sala sem espaço", { description: "Não há células livres para um novo ativo." });
+      return;
+    }
     const idsBefore = new Set(store.getAssets().map((p) => p.id));
     store.add({ ...form, salaId: sala.id, x: destino.x, z: destino.z });
     setDirty(true);
@@ -360,6 +417,14 @@ function MicroView() {
   const exportPdf = () => {
     if (!printReport(reportInput())) toast("Permita pop-ups para gerar o PDF.");
   };
+
+  if (!salaEncontrada) {
+    return (
+      <AppShell>
+        <p className="text-sm text-muted-foreground">Nenhum ambiente cadastrado.</p>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -409,7 +474,7 @@ function MicroView() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {isAdmin && (
+          {canEditInfo && (
             <Dialog
               open={open}
               onOpenChange={(o) => {
@@ -494,7 +559,7 @@ function MicroView() {
               <div className="text-xs text-muted-foreground">
                 Use a busca no topo da aplicação para localizar um patrimônio.
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {mode === "3d" && (
                   <div className="flex rounded-md border border-border p-0.5">
                     <button
@@ -513,7 +578,7 @@ function MicroView() {
                     </button>
                   </div>
                 )}
-                {isAdmin && (
+                {canMutate && (
                   <>
                     <Button
                       variant="outline"
@@ -533,23 +598,27 @@ function MicroView() {
                     >
                       <Save className="mr-2 h-4 w-4" /> Salvar
                     </Button>
-                    <Button
-                      variant={editMode ? "default" : "outline"}
-                      className={`h-9 ${editMode ? "shadow-[0_0_0_3px_hsl(var(--primary)/0.18)]" : ""}`}
-                      onClick={() => session.toggleEditMode()}
-                    >
-                      <Hammer className="mr-2 h-4 w-4" />
-                      {editMode ? "Modo Edição ativo" : "Modo Edição"}
-                    </Button>
-                    <SalaFormDialog
-                      sala={sala}
-                      trigger={
-                        <Button variant="outline" className="h-9 bg-card">
-                          <Ruler className="mr-2 h-4 w-4" /> Editar ambiente
-                        </Button>
-                      }
-                    />
                   </>
+                )}
+                {perms.mover && (
+                  <Button
+                    variant={editMode ? "default" : "outline"}
+                    className={`h-9 ${editMode ? "shadow-[0_0_0_3px_hsl(var(--primary)/0.18)]" : ""}`}
+                    onClick={() => session.toggleEditMode()}
+                  >
+                    <Hammer className="mr-2 h-4 w-4" />
+                    {editMode ? "Modo Edição ativo" : "Modo Edição"}
+                  </Button>
+                )}
+                {isAdmin && (
+                  <SalaFormDialog
+                    sala={sala}
+                    trigger={
+                      <Button variant="outline" className="h-9 bg-card">
+                        <Ruler className="mr-2 h-4 w-4" /> Editar ambiente
+                      </Button>
+                    }
+                  />
                 )}
                 <TooltipProvider>
                   <Tooltip>
@@ -570,11 +639,13 @@ function MicroView() {
               </div>
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">
-              {canEdit
+              {canMove
                 ? "Modo Edição ativo — arraste os ativos para realocar na grade (células ocupadas são bloqueadas)."
-                : isAdmin
+                : perms.mover
                   ? "Ative o Modo Edição para mover os ativos no mapa."
-                  : "Perfil Visualizador — navegação somente leitura."}
+                  : canMutate
+                    ? "Seu perfil pode alterar dados dos ativos, sem reposicioná-los no mapa."
+                    : "Navegação somente leitura."}
             </p>
           </header>
           <div className="h-[560px] w-full bg-surface-3d">
@@ -584,12 +655,12 @@ function MicroView() {
                 assets={roomAssets}
                 focusId={focusId}
                 selectedId={selectedId}
-                canDrag={canEdit}
+                canDrag={canMove}
                 onSelect={setSelectedId}
                 onRelocate={handleRelocate}
                 onBlocked={handleBlocked}
-                onContextMenu={isAdmin ? handleContextMenu : undefined}
-                onContextEmpty={isAdmin ? handleContextEmpty : undefined}
+                onContextMenu={canEditInfo || canTransfer || canDelete ? handleContextMenu : undefined}
+                onContextEmpty={canEditInfo ? handleContextEmpty : undefined}
                 controlsRef={controlsRef}
               />
             ) : (
@@ -597,7 +668,7 @@ function MicroView() {
                 sala={sala}
                 assets={roomAssets}
                 selectedId={selectedId}
-                canDrag={canEdit}
+                canDrag={canMove}
                 onSelect={setSelectedId}
                 onRelocate={handleRelocate}
               />
@@ -643,7 +714,7 @@ function MicroView() {
                     </span>
                   </dd>
                 </div>
-                {isAdmin ? (
+                {canDelete ? (
                   <Button
                     variant="outline"
                     className="mt-2 w-full text-destructive"
@@ -660,6 +731,7 @@ function MicroView() {
                           salaId: a.salaId,
                           x: a.x,
                           z: a.z,
+                          status: a.status,
                         }),
                       );
                       setSelectedId(null);
@@ -670,7 +742,7 @@ function MicroView() {
                   </Button>
                 ) : (
                   <p className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-                    <Lock className="h-3.5 w-3.5" /> Perfil Visualizador: edição desabilitada.
+                    <Lock className="h-3.5 w-3.5" /> Sem permissão para excluir este ativo.
                   </p>
                 )}
               </dl>
@@ -733,18 +805,23 @@ function MicroView() {
             </>
           ) : (
             <>
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                onClick={() => openEdit(ctxMenu.id)}
-              >
-                <Pencil className="h-3.5 w-3.5" /> Editar
-              </button>
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                onClick={() => openMove(ctxMenu.id)}
-              >
-                <MoveRight className="h-3.5 w-3.5" /> Transferir para outra sala
-              </button>
+              {canEditInfo && (
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                  onClick={() => openEdit(ctxMenu.id)}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Editar
+                </button>
+              )}
+              {canTransfer && (
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                  onClick={() => openMove(ctxMenu.id)}
+                >
+                  <MoveRight className="h-3.5 w-3.5" /> Transferir para outra sala
+                </button>
+              )}
+              {canDelete && (
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-destructive hover:bg-accent"
                 onClick={() => {
@@ -762,6 +839,7 @@ function MicroView() {
                         salaId: a.salaId,
                         x: a.x,
                         z: a.z,
+                        status: a.status,
                       }),
                     );
                   }
@@ -772,6 +850,7 @@ function MicroView() {
               >
                 <Trash2 className="h-3.5 w-3.5" /> Excluir
               </button>
+              )}
             </>
           )}
         </div>

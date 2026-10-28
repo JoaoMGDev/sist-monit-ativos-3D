@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Accessibility,
@@ -80,6 +80,12 @@ export function SettingsDialog({
   const { user } = useAuth();
   const [secao, setSecao] = useState<SecaoId>("perfil");
   const [nome, setNome] = useState(cfg.nome);
+
+  useEffect(() => {
+    if (open) setNome(cfg.nome);
+    // Recarrega ao abrir. Incluir cfg.nome sobrescreveria o texto enquanto o usuário digita.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const salvarNome = async () => {
     const v = nome.trim();

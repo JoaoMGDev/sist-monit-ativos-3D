@@ -169,15 +169,14 @@ function GlobalSearch({ className }: { className?: string }) {
   const buscar = () => {
     const t = q.trim();
     if (!t) return;
-    const hit = store
-      .getAssets()
-      .find(
-        (a) =>
-          a.codigo === t ||
-          a.codigo.includes(t) ||
-          a.nome.toLowerCase().includes(t.toLowerCase()) ||
-          a.ip === t,
-      );
+    const list = store.getAssets();
+    const qn = t.toLowerCase();
+    const hit =
+      list.find((a) => a.codigo === t) ??
+      list.find((a) => a.ip === t) ??
+      list.find((a) => a.nome.toLowerCase() === qn) ??
+      list.find((a) => a.nome.toLowerCase().includes(qn)) ??
+      list.find((a) => a.codigo.includes(t) || a.ip.includes(t));
     if (!hit) {
       toast("Patrimônio não localizado", { description: `Nenhum ativo corresponde a "${t}".` });
       return;

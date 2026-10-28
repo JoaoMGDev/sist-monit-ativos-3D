@@ -14,17 +14,33 @@ export interface ReportInput {
 const dataHora = () => new Date().toLocaleString("pt-BR");
 const salaNome = (salas: Sala[], id: string) => salas.find((s) => s.id === id)?.nome ?? "-";
 
+/** Evita quebra de coluna e fórmula de planilha em campos digitados pelo usuário. */
+export function csvField(value: string | number) {
+  let s = String(value);
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  if (/[;"\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function esc(value: string | number) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export function buildCsv(input: ReportInput) {
   const lines: string[] = [];
   lines.push(`# ${input.titulo}`);
   lines.push(`# ${input.subtitulo}`);
-  lines.push(`# Gerado em;${dataHora()};Usuário;${input.usuario}`);
+  lines.push(`# Gerado em;${csvField(dataHora())};Usuário;${csvField(input.usuario)}`);
   lines.push("#");
   lines.push("# Métricas");
-  input.metricas.forEach((m) => lines.push(`# ${m.label};${m.valor}`));
+  input.metricas.forEach((m) => lines.push(`# ${csvField(m.label)};${csvField(m.valor)}`));
   lines.push("#");
   lines.push("# Filtros aplicados");
-  input.filtros.forEach((f) => lines.push(`# ${f.label};${f.valor}`));
+  input.filtros.forEach((f) => lines.push(`# ${csvField(f.label)};${csvField(f.valor)}`));
   lines.push("");
   lines.push("codigo;equipamento;tipo;ip;sala;status;atualizado_em");
   input.rows.forEach((r) =>
@@ -37,7 +53,9 @@ export function buildCsv(input: ReportInput) {
         salaNome(input.salas, r.salaId),
         r.status === "offline" ? "Offline" : "Online",
         new Date(r.atualizadoEm).toLocaleString("pt-BR"),
-      ].join(";"),
+      ]
+        .map(csvField)
+        .join(";"),
     ),
   );
   return lines.join("\n");
@@ -72,18 +90,18 @@ export function printReport(input: ReportInput) {
   const rows = input.rows
     .map(
       (r) => `<tr>
-        <td class="num">${r.codigo}</td>
-        <td>${r.nome}</td>
-        <td class="cap">${r.tipo}</td>
-        <td class="num">${r.ip}</td>
-        <td>${salaNome(input.salas, r.salaId)}</td>
+        <td class="num">${esc(r.codigo)}</td>
+        <td>${esc(r.nome)}</td>
+        <td class="cap">${esc(r.tipo)}</td>
+        <td class="num">${esc(r.ip)}</td>
+        <td>${esc(salaNome(input.salas, r.salaId))}</td>
         <td><span class="pill ${r.status}">${r.status === "offline" ? "Offline" : "Online"}</span></td>
       </tr>`,
     )
     .join("");
 
   win.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
-  <title>${input.titulo}</title>
+  <title>${esc(input.titulo)}</title>
   <style>
     *{box-sizing:border-box} body{font-family:Inter,-apple-system,Segoe UI,sans-serif;color:#101828;margin:0;padding:36px;background:#fff}
     header{border-bottom:3px solid #1f3b6e;padding-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
@@ -112,15 +130,15 @@ export function printReport(input: ReportInput) {
   <header>
     <div class="brand">AtivosTI<small>Gestão de Ativos · Mapeamento 3D</small></div>
     <div>
-      <h1>${input.titulo}</h1>
-      <div class="meta">${input.subtitulo}<br/>Gerado em ${dataHora()}<br/>Responsável: ${input.usuario}</div>
+      <h1>${esc(input.titulo)}</h1>
+      <div class="meta">${esc(input.subtitulo)}<br/>Gerado em ${esc(dataHora())}<br/>Responsável: ${esc(input.usuario)}</div>
     </div>
   </header>
   <div class="grid">
-    ${input.metricas.map((m) => `<div class="card"><span>${m.label}</span><strong>${m.valor}</strong></div>`).join("")}
+    ${input.metricas.map((m) => `<div class="card"><span>${esc(m.label)}</span><strong>${esc(m.valor)}</strong></div>`).join("")}
   </div>
   <div class="filters"><b>Filtros aplicados:</b> ${
-    input.filtros.map((f) => `${f.label}: ${f.valor}`).join(" &nbsp;·&nbsp; ") || "nenhum"
+    input.filtros.map((f) => `${esc(f.label)}: ${esc(f.valor)}`).join(" &nbsp;·&nbsp; ") || "nenhum"
   }</div>
   ${chartsHtml(input.chartIds ?? [])}
   <table><thead><tr>

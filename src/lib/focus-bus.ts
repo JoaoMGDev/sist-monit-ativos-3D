@@ -1,23 +1,31 @@
-/** Canal simples para pedir centralização de câmera a partir de outro componente. */
-type Listener = (assetId: string) => void;
+/**
+ * Canal para centralizar a câmera num ativo.
+ * O listener devolve true quando a sala atual consumiu o pedido.
+ * Se ninguém consumir (ainda estamos noutra sala, ou a tela de destino não montou),
+ * o id fica pendente para o próximo assinante — sem reentrar no listener atual.
+ */
+type Listener = (assetId: string) => boolean;
 
 const listeners = new Set<Listener>();
 let pendente: string | null = null;
 
 export const focusBus = {
   request(assetId: string) {
-    if (listeners.size === 0) {
-      pendente = assetId;
-      return;
+    pendente = assetId;
+    for (const l of [...listeners]) {
+      if (l(assetId)) {
+        pendente = null;
+        return;
+      }
     }
-    listeners.forEach((l) => l(assetId));
   },
   subscribe(l: Listener) {
     listeners.add(l);
     if (pendente) {
       const id = pendente;
-      pendente = null;
-      setTimeout(() => l(id), 60);
+      setTimeout(() => {
+        if (pendente === id && l(id)) pendente = null;
+      }, 80);
     }
     return () => {
       listeners.delete(l);

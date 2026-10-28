@@ -87,12 +87,23 @@ function AdminUsuarios() {
       toast("Você não pode alterar o próprio cargo.");
       return;
     }
+    if (alvo.role === "admin" && novo === "viewer" && linhas.filter((l) => l.role === "admin").length <= 1) {
+      toast("A plataforma precisa de ao menos um administrador.");
+      return;
+    }
     setSalvando(alvo.id);
-    const del = await supabase.from("user_roles").delete().eq("user_id", alvo.id);
-    const ins = del.error ? del : await supabase.from("user_roles").insert({ user_id: alvo.id, role: novo });
-    setSalvando(null);
-    if (ins.error) {
+    // Insere o cargo novo antes de apagar o antigo. Se a inserção falhar, o usuário não fica sem papel.
+    const ins = await supabase.from("user_roles").insert({ user_id: alvo.id, role: novo });
+    if (ins.error && ins.error.code !== "23505") {
+      setSalvando(null);
       toast("Falha ao atualizar cargo", { description: ins.error.message });
+      void carregar();
+      return;
+    }
+    const del = await supabase.from("user_roles").delete().eq("user_id", alvo.id).neq("role", novo);
+    setSalvando(null);
+    if (del.error) {
+      toast("Falha ao atualizar cargo", { description: del.error.message });
       void carregar();
       return;
     }

@@ -69,6 +69,7 @@ export const auth = {
   get: () => snapshot,
   async signOut() {
     await supabase.auth.signOut();
+    roleSession.setEditMode(false);
     state = { loading: false, session: null, user: null, nome: "", role: "viewer" };
     emit();
   },
