@@ -1,9 +1,10 @@
 /**
- * Camada de dados do MVP (modelo relacional em memória):
- * usuarios, salas, patrimonio, status_logs.
+ * Camada de dados do MVP: usuarios, salas, patrimonio, status_logs.
  *
- * O serviço de tempo real simula um canal WebSocket assíncrono: um emissor
- * publica eventos de status e a UI/motor 3D reagem por assinatura (sem refresh).
+ * Salas e patrimônios ficam gravados neste navegador (`localStorage`), então
+ * mover um ativo na grade ou transferi-lo de sala sobrevive a atualizar a página.
+ * O monitoramento em tempo real continua simulado: um emissor publica eventos
+ * de status e a UI reage por assinatura.
  */
 
 import { settings } from "./settings";
@@ -125,8 +126,87 @@ function seedAssets(): Patrimonio[] {
   ];
 }
 
+const STORAGE_KEY = "ativosti.inventario";
+const TIPOS: readonly AssetKind[] = ["desktop", "notebook", "servidor", "switch", "impressora"];
+
+function isSala(value: unknown): value is Sala {
+  if (!value || typeof value !== "object") return false;
+  const sala = value as Sala;
+  return (
+    typeof sala.id === "string" &&
+    sala.id.length > 0 &&
+    typeof sala.nome === "string" &&
+    typeof sala.numero === "string" &&
+    typeof sala.andar === "string" &&
+    (CATALOGOS as readonly string[]).includes(sala.catalogo) &&
+    typeof sala.largura === "number" &&
+    typeof sala.profundidade === "number"
+  );
+}
+
+function isPatrimonio(value: unknown): value is Patrimonio {
+  if (!value || typeof value !== "object") return false;
+  const asset = value as Patrimonio;
+  return (
+    typeof asset.id === "string" &&
+    asset.id.length > 0 &&
+    typeof asset.codigo === "string" &&
+    typeof asset.nome === "string" &&
+    TIPOS.includes(asset.tipo) &&
+    typeof asset.ip === "string" &&
+    typeof asset.salaId === "string" &&
+    typeof asset.x === "number" &&
+    typeof asset.z === "number" &&
+    (asset.status === "online" || asset.status === "offline") &&
+    typeof asset.atualizadoEm === "number"
+  );
+}
+
+function maiorSeq(list: Patrimonio[], atual: number) {
+  let next = atual;
+  for (const asset of list) {
+    const n = Number(/^a(\d+)$/.exec(asset.id)?.[1]);
+    if (Number.isFinite(n) && n > next) next = n;
+  }
+  return next;
+}
+
+/** Restaura o inventário gravado neste navegador. Sem dados válidos, fica a semente. */
+function readPersisted(): { seq: number; salas: Sala[]; patrimonios: Patrimonio[] } | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { seq?: unknown; salas?: unknown; patrimonios?: unknown };
+    if (!Array.isArray(data.salas) || !Array.isArray(data.patrimonios)) return null;
+    const salasOk = data.salas.filter(isSala);
+    if (!salasOk.length) return null;
+    const ids = new Set(salasOk.map((sala) => sala.id));
+    const assetsOk = data.patrimonios.filter(isPatrimonio).filter((asset) => ids.has(asset.salaId));
+    const seqSalvo = typeof data.seq === "number" && Number.isFinite(data.seq) ? data.seq : 0;
+    return { seq: maiorSeq(assetsOk, seqSalvo), salas: salasOk, patrimonios: assetsOk };
+  } catch {
+    return null;
+  }
+}
+
 let patrimonios: Patrimonio[] = seedAssets();
+const salvo = readPersisted();
+if (salvo) {
+  salas = salvo.salas;
+  patrimonios = salvo.patrimonios;
+  seq = maiorSeq(patrimonios, Math.max(seq, salvo.seq));
+}
 let logs: StatusLog[] = [];
+
+function persist() {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ seq, salas, patrimonios }));
+  } catch {
+    /* cota do navegador estourada: a sessão atual segue em memória */
+  }
+}
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -138,6 +218,7 @@ function emit() {
   snapshotAssets = [...patrimonios];
   snapshotLogs = [...logs];
   snapshotSalas = [...salas];
+  persist();
   listeners.forEach((l) => l());
 }
 

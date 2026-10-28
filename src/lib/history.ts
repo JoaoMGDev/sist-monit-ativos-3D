@@ -20,7 +20,44 @@ interface UndoEntry {
 /** Somente ações espaciais/de edição de ativos entram na fila de desfazer. */
 const UNDOABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["add", "edit", "move", "delete"]);
 
-let items: ActionLog[] = [];
+const HISTORY_KEY = "ativosti.historico";
+const KINDS: readonly ActionKind[] = ["add", "edit", "move", "delete", "sala", "undo"];
+
+function isAction(value: unknown): value is ActionLog {
+  if (!value || typeof value !== "object") return false;
+  const item = value as ActionLog;
+  return (
+    typeof item.id === "string" &&
+    KINDS.includes(item.tipo) &&
+    typeof item.descricao === "string" &&
+    typeof item.usuario === "string" &&
+    typeof item.criadoEm === "number"
+  );
+}
+
+function readHistory(): ActionLog[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw) as unknown;
+    if (!Array.isArray(data)) return [];
+    return data.filter(isAction).slice(0, 200);
+  } catch {
+    return [];
+  }
+}
+
+function persistHistory() {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(items));
+  } catch {
+    /* ignore */
+  }
+}
+
+let items: ActionLog[] = readHistory();
 let snapshot: ActionLog[] = items;
 let undoStack: UndoEntry[] = [];
 let canUndoSnapshot = false;
@@ -33,6 +70,7 @@ function usuarioAtual() {
 function emit() {
   snapshot = [...items];
   canUndoSnapshot = undoStack.some((e) => e.usuario === usuarioAtual());
+  persistHistory();
   listeners.forEach((l) => l());
 }
 

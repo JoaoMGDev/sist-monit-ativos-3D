@@ -173,7 +173,7 @@ function MicroView() {
         () => store.relocate(id, oldSala, ox, oz),
       );
       toast("Realocação salva", {
-        description: `${before.codigo} alinhado à grade em ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m).`,
+        description: `${before.codigo} ficou em ${sala.nome} (${x.toFixed(1)}m, ${z.toFixed(1)}m). A posição continua depois de atualizar a página.`,
       });
     },
     [sala.id, sala.nome],
@@ -183,7 +183,7 @@ function MicroView() {
     setDirty(false);
     history.clearUndo();
     toast("Alterações salvas", {
-      description: `O mapeamento de ${sala.nome} foi consolidado. O histórico de ações foi mantido.`,
+      description: `As posições de ${sala.nome} já estão gravadas neste navegador. A fila de desfazer desta sessão foi encerrada.`,
     });
   }, [sala.nome]);
 
@@ -299,7 +299,9 @@ function MicroView() {
     );
     setMoveAssetId(null);
     setSelectedId(null);
-    toast("Ativo transferido", { description: `${before.codigo} agora está em ${destino?.nome}.` });
+    toast("Ativo transferido", {
+      description: `${before.codigo} agora está em ${destino?.nome}. A sala continua depois de atualizar a página.`,
+    });
   };
 
   const openEdit = (id: string) => {
