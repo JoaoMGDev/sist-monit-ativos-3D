@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { Role } from "./asset-store";
 
-let role: Role = "admin";
+let role: Role = "viewer";
 let editMode = false;
 const listeners = new Set<() => void>();
 
@@ -16,13 +16,14 @@ export const session = {
   },
   get: () => role,
   set(next: Role) {
+    const changed = role !== next;
     role = next;
-    if (next !== "admin") editMode = false;
+    if (changed) editMode = false;
     emit();
   },
   getEditMode: () => editMode,
   setEditMode(next: boolean) {
-    editMode = role === "admin" ? next : false;
+    editMode = next;
     emit();
   },
   toggleEditMode() {

@@ -81,6 +81,11 @@ export const history = {
     }
     return null;
   },
+  /** Descarta só a pilha de desfazer. O histórico de auditoria permanece. */
+  clearUndo() {
+    undoStack = [];
+    emit();
+  },
   clear() {
     items = [];
     undoStack = [];

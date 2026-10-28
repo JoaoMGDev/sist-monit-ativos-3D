@@ -4,6 +4,7 @@ import { Download, Filter } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useStatusLogs, useAssets, useSalas } from "@/hooks/use-assets";
 import { useActionLogs } from "@/lib/history";
+import { csvField } from "@/lib/report";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -103,21 +104,41 @@ function LogsPage() {
 
 
   const exportCsv = () => {
-    const head = "patrimonio;evento;sala;data_hora";
-    const body = rows.map((l) => {
-      const a = assets.find((p) => p.id === l.patrimonioId);
-      return [
-        l.codigo,
-        l.status === "offline" ? "Queda de conexão" : "Reconexão",
-        salas.find((s) => s.id === a?.salaId)?.nome ?? "-",
-        new Date(l.criadoEm).toLocaleString("pt-BR"),
-      ].join(";");
-    });
-    const blob = new Blob([[head, ...body].join("\n")], { type: "text/csv;charset=utf-8" });
+    const linhas =
+      aba === "acoes"
+        ? [
+            "data;hora;acao;descricao;usuario",
+            ...acoesFiltradas.map((a) =>
+              [
+                new Date(a.criadoEm).toLocaleDateString("pt-BR"),
+                new Date(a.criadoEm).toLocaleTimeString("pt-BR"),
+                ACAO_LABEL[a.tipo] ?? a.tipo,
+                a.descricao,
+                a.usuario,
+              ]
+                .map(csvField)
+                .join(";"),
+            ),
+          ]
+        : [
+            "patrimonio;evento;sala;data_hora",
+            ...rows.map((l) => {
+              const a = assets.find((p) => p.id === l.patrimonioId);
+              return [
+                l.codigo,
+                l.status === "offline" ? "Queda de conexão" : "Reconexão",
+                salas.find((s) => s.id === a?.salaId)?.nome ?? "-",
+                new Date(l.criadoEm).toLocaleString("pt-BR"),
+              ]
+                .map(csvField)
+                .join(";");
+            }),
+          ];
+    const blob = new Blob(["\ufeff" + linhas.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "logs-monitoramento.csv";
+    a.download = aba === "acoes" ? "logs-acoes.csv" : "logs-monitoramento.csv";
     a.click();
     URL.revokeObjectURL(url);
   };

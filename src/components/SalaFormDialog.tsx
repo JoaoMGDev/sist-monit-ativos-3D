@@ -81,7 +81,20 @@ export function SalaFormDialog({ sala, trigger }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) return;
+        setForm({
+          nome: sala?.nome ?? "",
+          numero: sala?.numero ?? "",
+          catalogo: (sala?.catalogo ?? CATALOGOS[0]) as Catalogo,
+          largura: String(sala?.largura ?? 12),
+          profundidade: String(sala?.profundidade ?? 9),
+        });
+      }}
+    >
       <DialogTrigger asChild>
         {trigger ?? (
           <Button>

@@ -74,6 +74,9 @@ let salas: Sala[] = [
 let seq = 0;
 const uid = () => `a${++seq}`;
 
+/** Alinhamento à grade de 1m — os ativos ficam centralizados na célula. */
+export const snapToGrid = (v: number) => Math.floor(v) + 0.5;
+
 function seedAssets(): Patrimonio[] {
   const now = Date.now();
   const make = (
@@ -85,7 +88,18 @@ function seedAssets(): Patrimonio[] {
     x: number,
     z: number,
     status: Status = "online",
-  ): Patrimonio => ({ id: uid(), codigo, nome, tipo, ip, salaId, x, z, status, atualizadoEm: now });
+  ): Patrimonio => ({
+    id: uid(),
+    codigo,
+    nome,
+    tipo,
+    ip,
+    salaId,
+    x: snapToGrid(x),
+    z: snapToGrid(z),
+    status,
+    atualizadoEm: now,
+  });
 
   return [
     make("100241", "Servidor de Aplicação", "servidor", "10.0.1.10", "s1", -3, -2),
@@ -127,9 +141,6 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-/** Alinhamento à grade de 1m — os ativos ficam centralizados na célula. */
-export const snapToGrid = (v: number) => Math.floor(v) + 0.5;
-
 export const store = {
   subscribe(l: Listener) {
     listeners.add(l);
@@ -147,6 +158,8 @@ export const store = {
   },
   updateSala(id: string, patch: Partial<Sala>) {
     salas = salas.map((s) => (s.id === id ? { ...s, ...patch, andar: patch.catalogo ?? s.andar } : s));
+    const sala = salas.find((s) => s.id === id);
+    if (sala) patrimonios = relayout(sala, patrimonios);
     emit();
   },
   removeSala(id: string) {
@@ -154,8 +167,19 @@ export const store = {
     patrimonios = patrimonios.filter((p) => p.salaId !== id);
     emit();
   },
-  add(input: Omit<Patrimonio, "id" | "atualizadoEm" | "status">) {
-    patrimonios = [...patrimonios, { ...input, id: uid(), status: "online", atualizadoEm: Date.now() }];
+  add(input: Omit<Patrimonio, "id" | "atualizadoEm" | "status"> & { status?: Status }) {
+    const sala = salas.find((s) => s.id === input.salaId);
+    const cell = sala ? clampToCell(sala, input.x, input.z) : { x: snapToGrid(input.x), z: snapToGrid(input.z) };
+    patrimonios = [
+      ...patrimonios,
+      {
+        ...input,
+        ...cell,
+        id: uid(),
+        status: input.status ?? "online",
+        atualizadoEm: Date.now(),
+      },
+    ];
     emit();
   },
   update(id: string, patch: Partial<Patrimonio>) {
@@ -166,19 +190,26 @@ export const store = {
     patrimonios = patrimonios.filter((p) => p.id !== id);
     emit();
   },
-  /** Realocação espacial: persiste sala + coordenadas imediatamente. */
+  /** Realocação espacial: persiste sala + coordenadas imediatamente, já na célula da grade. */
   relocate(id: string, salaId: string, x: number, z: number) {
-    store.update(id, { salaId, x, z });
+    const sala = salas.find((s) => s.id === salaId);
+    const cell = sala ? clampToCell(sala, x, z) : { x: snapToGrid(x), z: snapToGrid(z) };
+    store.update(id, { salaId, x: cell.x, z: cell.z });
   },
   setStatus(id: string, status: Status) {
     const asset = patrimonios.find((p) => p.id === id);
     if (!asset || asset.status === status) return;
-    store.update(id, { status });
+    const now = Date.now();
+    patrimonios = patrimonios.map((p) => (p.id === id ? { ...p, status, atualizadoEm: now } : p));
     logs = [
-      { id: `l${logs.length + 1}`, patrimonioId: id, codigo: asset.codigo, status, criadoEm: Date.now() },
+      { id: `l${logs.length + 1}`, patrimonioId: id, codigo: asset.codigo, status, criadoEm: now },
       ...logs,
     ].slice(0, 100);
     emit();
+  },
+  isTaken(field: "codigo" | "ip", value: string, ignoreId?: string) {
+    const v = value.trim();
+    return patrimonios.some((p) => p.id !== ignoreId && p[field] === v);
   },
 };
 
@@ -215,17 +246,95 @@ export function connectMonitoring(onEvent: (e: StatusEvent) => void) {
   };
 }
 
+/** Células de 1 m centradas em *.5, dentro do piso da sala. */
+export function cellsOf(sala: Pick<Sala, "largura" | "profundidade">) {
+  const lx = Math.floor(sala.largura / 2);
+  const lz = Math.floor(sala.profundidade / 2);
+  const cells: { x: number; z: number }[] = [];
+  for (let z = -lz; z < lz; z++) {
+    for (let x = -lx; x < lx; x++) cells.push({ x: x + 0.5, z: z + 0.5 });
+  }
+  return cells;
+}
+
+/** Encaixa um ponto na célula da grade mais próxima que ainda cabe na sala. */
+export function clampToCell(sala: Pick<Sala, "largura" | "profundidade">, x: number, z: number) {
+  const lx = Math.floor(sala.largura / 2);
+  const lz = Math.floor(sala.profundidade / 2);
+  return {
+    x: Math.max(-lx + 0.5, Math.min(lx - 0.5, snapToGrid(x))),
+    z: Math.max(-lz + 0.5, Math.min(lz - 0.5, snapToGrid(z))),
+  };
+}
+
+export function findFreeCell(sala: Sala, ignoreId?: string): { x: number; z: number } | null {
+  const used = patrimonios.filter((p) => p.salaId === sala.id && p.id !== ignoreId);
+  for (const c of cellsOf(sala)) {
+    if (!used.some((a) => Math.abs(a.x - c.x) < 0.5 && Math.abs(a.z - c.z) < 0.5)) return c;
+  }
+  return null;
+}
+
+function cellKey(x: number, z: number) {
+  return `${x}:${z}`;
+}
+
+/** Recoloca ativos que ficaram fora da sala ou sobrepostos depois de um redimensionamento. */
+function relayout(sala: Sala, list: Patrimonio[]) {
+  const cells = cellsOf(sala);
+  const used = new Set<string>();
+  return list.map((p) => {
+    if (p.salaId !== sala.id) return p;
+    let spot = clampToCell(sala, p.x, p.z);
+    const fits = cells.some((c) => c.x === spot.x && c.z === spot.z);
+    if (!fits || used.has(cellKey(spot.x, spot.z))) {
+      const free = cells.find((c) => !used.has(cellKey(c.x, c.z)));
+      if (free) spot = free;
+    }
+    used.add(cellKey(spot.x, spot.z));
+    if (spot.x === p.x && spot.z === p.z) return p;
+    return { ...p, x: spot.x, z: spot.z };
+  });
+}
+
 /** Validações */
 export const onlyDigits = (v: string) => v.replace(/\D/g, "");
 
+function octet(digits: string) {
+  if (!digits) return "";
+  const n = Number(digits.slice(0, 3));
+  if (n > 255) return "255";
+  return digits.length > 1 ? String(n) : digits;
+}
+
+/**
+ * Máscara de IPv4 que preserva os pontos digitados.
+ * Sem isso, "10.0.1.10" virava "100.110" porque os separadores eram descartados
+ * e os dígitos reagrupados de 3 em 3.
+ */
 export function maskIp(value: string) {
-  const digits = value.replace(/[^\d]/g, "").slice(0, 12);
-  const parts: string[] = [];
-  for (let i = 0; i < digits.length; i += 3) parts.push(digits.slice(i, i + 3));
-  return parts
-    .map((p) => (Number(p) > 255 ? "255" : p))
-    .join(".")
-    .slice(0, 15);
+  const cleaned = value.replace(/[^\d.]/g, "");
+  if (!cleaned) return "";
+
+  if (!cleaned.includes(".") && cleaned.length > 3) {
+    const digits = cleaned.slice(0, 12);
+    const grouped: string[] = [];
+    for (let i = 0; i < digits.length && grouped.length < 4; i += 3) {
+      grouped.push(octet(digits.slice(i, i + 3)));
+    }
+    return grouped.join(".").slice(0, 15);
+  }
+
+  const endsWithDot = cleaned.endsWith(".");
+  const parts = cleaned
+    .split(".")
+    .slice(0, 4)
+    .map((part) => octet(part.replace(/\D/g, "")))
+    .filter((part, index, all) => part !== "" || (endsWithDot && index === all.length - 1 && all.length > 1));
+
+  const body = parts.filter((part) => part !== "").join(".");
+  const result = endsWithDot && parts.filter((part) => part !== "").length < 4 ? `${body}.` : body;
+  return result.slice(0, 15);
 }
 
 export const isValidIp = (v: string) =>

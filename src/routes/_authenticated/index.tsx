@@ -31,6 +31,7 @@ import { AnalyticsCharts } from "@/components/AnalyticsCharts";
 import { downloadCsv, printReport, type ReportInput } from "@/lib/report";
 import { useSettings } from "@/lib/settings";
 import { useRole } from "@/lib/session";
+import { useMinhasPermissoes } from "@/lib/permissions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -115,6 +116,7 @@ function Dashboard() {
   const role = useRole();
   const cfg = useSettings();
   const isAdmin = role === "admin";
+  const perms = useMinhasPermissoes();
   const [q, setQ] = useState("");
   const [fSala, setFSala] = useState("todas");
   const [fTipo, setFTipo] = useState("todos");
@@ -133,6 +135,10 @@ function Dashboard() {
       toast("Endereço IP inválido.");
       return;
     }
+    if (store.isTaken("ip", editForm.ip, detalhe.id)) {
+      toast("Esse endereço IP já está em uso.");
+      return;
+    }
     store.update(detalhe.id, { nome: editForm.nome.trim(), ip: editForm.ip });
     setDetalhe({ ...detalhe, nome: editForm.nome.trim(), ip: editForm.ip });
     setEditando(false);
@@ -148,7 +154,11 @@ function Dashboard() {
   const offline = assets.filter((a) => a.status === "offline");
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
+    const salasDoCatalogo = new Set(
+      (catalogo === "todos" ? salas : salas.filter((s) => s.catalogo === catalogo)).map((s) => s.id),
+    );
     return assets.filter((a) => {
+      if (!salasDoCatalogo.has(a.salaId)) return false;
       if (fSala !== "todas" && a.salaId !== fSala) return false;
       if (fTipo !== "todos" && a.tipo !== fTipo) return false;
       if (fStatus !== "todos" && a.status !== fStatus) return false;
@@ -160,10 +170,15 @@ function Dashboard() {
         a.tipo.includes(t)
       );
     });
-  }, [assets, q, fSala, fTipo, fStatus]);
+  }, [assets, salas, catalogo, q, fSala, fTipo, fStatus]);
 
   const filtrosAtivos =
-    (fSala !== "todas" ? 1 : 0) + (fTipo !== "todos" ? 1 : 0) + (fStatus !== "todos" ? 1 : 0);
+    (catalogo !== "todos" ? 1 : 0) +
+    (fSala !== "todas" ? 1 : 0) +
+    (fTipo !== "todos" ? 1 : 0) +
+    (fStatus !== "todos" ? 1 : 0);
+
+  const detalheVivo = detalhe ? (assets.find((a) => a.id === detalhe.id) ?? null) : null;
 
   const reportInput = (): ReportInput => ({
     titulo: "Relatório Geral de Ativos de TI",
@@ -177,10 +192,10 @@ function Dashboard() {
       { label: "Status", valor: fStatus === "todos" ? "Todos" : fStatus },
     ],
     metricas: [
-      { label: "Ativos", valor: assets.length },
-      { label: "Conectados", valor: assets.length - offline.length },
-      { label: "Falhas", valor: offline.length },
-      { label: "Salas", valor: salas.length },
+      { label: "Ativos", valor: filtered.length },
+      { label: "Conectados", valor: filtered.filter((a) => a.status === "online").length },
+      { label: "Falhas", valor: filtered.filter((a) => a.status === "offline").length },
+      { label: "Salas", valor: new Set(filtered.map((a) => a.salaId)).size },
     ],
     rows: filtered,
     salas,
@@ -250,7 +265,12 @@ function Dashboard() {
             {(["todos", ...CATALOGOS] as const).map((c) => (
               <button
                 key={c}
-                onClick={() => setCatalogo(c)}
+                onClick={() => {
+                  setCatalogo(c);
+                  if (fSala === "todas" || c === "todos") return;
+                  const sala = salas.find((s) => s.id === fSala);
+                  if (sala && sala.catalogo !== c) setFSala("todas");
+                }}
                 className={`rounded-full border px-3 py-1 text-xs transition-colors ${
                   catalogo === c
                     ? "border-primary bg-primary text-primary-foreground"
@@ -345,7 +365,7 @@ function Dashboard() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todas">Todas as salas</SelectItem>
-                {salas.map((s) => (
+                {salasFiltradas.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.nome}
                   </SelectItem>
@@ -380,6 +400,7 @@ function Dashboard() {
                 variant="ghost"
                 className="h-9"
                 onClick={() => {
+                  setCatalogo("todos");
                   setFSala("todas");
                   setFTipo("todos");
                   setFStatus("todos");
@@ -451,7 +472,7 @@ function Dashboard() {
       </section>
 
       <Dialog
-        open={!!detalhe}
+        open={!!detalheVivo}
         onOpenChange={(o) => {
           if (!o) {
             setDetalhe(null);
@@ -463,28 +484,28 @@ function Dashboard() {
           <DialogHeader>
             <DialogTitle>Detalhes do ativo</DialogTitle>
           </DialogHeader>
-          {detalhe && (
+          {detalheVivo && (
             <div className="flex flex-col gap-5 sm:flex-row">
               <div className="shrink-0 self-start rounded-lg border border-border bg-muted/40 p-2">
-                <AssetGlyph tipo={detalhe.tipo} status={detalhe.status} size={120} />
+                <AssetGlyph tipo={detalheVivo.tipo} status={detalheVivo.status} size={120} />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
                   {(() => {
-                    const I = KIND_ICON[detalhe.tipo];
+                    const I = KIND_ICON[detalheVivo.tipo];
                     return <I className="h-3.5 w-3.5" />;
                   })()}
-                  {detalhe.tipo}
+                  {detalheVivo.tipo}
                 </p>
-                <h3 className="truncate text-lg font-semibold tracking-tight">{detalhe.nome}</h3>
+                <h3 className="truncate text-lg font-semibold tracking-tight">{detalheVivo.nome}</h3>
                 <span
                   className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                    detalhe.status === "offline"
+                    detalheVivo.status === "offline"
                       ? "bg-status-offline-soft text-status-offline"
                       : "bg-status-online-soft text-status-online"
                   }`}
                 >
-                  {detalhe.status === "offline" ? "Offline" : "Online"}
+                  {detalheVivo.status === "offline" ? "Offline" : "Online"}
                 </span>
 
                 {editando ? (
@@ -515,18 +536,18 @@ function Dashboard() {
                   <>
                     <dl className="mt-4 space-y-2 text-sm">
                       {[
-                        ["Código de patrimônio", detalhe.codigo],
-                        ["Descrição", `${detalhe.nome} · equipamento do tipo ${detalhe.tipo}`],
+                        ["Código de patrimônio", detalheVivo.codigo],
+                        ["Descrição", `${detalheVivo.nome} · equipamento do tipo ${detalheVivo.tipo}`],
                         [
                           "Sala / ambiente",
                           (() => {
-                            const s = salas.find((r) => r.id === detalhe.salaId);
+                            const s = salas.find((r) => r.id === detalheVivo.salaId);
                             return s ? `${s.nome} · sala ${s.numero}` : "—";
                           })(),
                         ],
-                        ["Endereço IP", detalhe.ip],
-                        ["Posição na grade", `${detalhe.x.toFixed(1)}m · ${detalhe.z.toFixed(1)}m`],
-                        ["Atualizado em", new Date(detalhe.atualizadoEm).toLocaleString("pt-BR")],
+                        ["Endereço IP", detalheVivo.ip],
+                        ["Posição na grade", `${detalheVivo.x.toFixed(1)}m · ${detalheVivo.z.toFixed(1)}m`],
+                        ["Atualizado em", new Date(detalheVivo.atualizadoEm).toLocaleString("pt-BR")],
                       ].map(([k, v]) => (
                         <div key={k} className="flex justify-between gap-4 border-b border-border/60 pb-1.5">
                           <dt className="text-muted-foreground">{k}</dt>
@@ -535,11 +556,11 @@ function Dashboard() {
                       ))}
                     </dl>
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
-                      {isAdmin && (
+                      {perms.editar && (
                         <Button
                           variant="outline"
                           onClick={() => {
-                            setEditForm({ nome: detalhe.nome, ip: detalhe.ip });
+                            setEditForm({ nome: detalheVivo.nome, ip: detalheVivo.ip });
                             setEditando(true);
                           }}
                         >
@@ -548,7 +569,7 @@ function Dashboard() {
                       )}
                       <Link
                         to="/salas/$salaId"
-                        params={{ salaId: detalhe.salaId }}
+                        params={{ salaId: detalheVivo.salaId }}
                         className="inline-flex items-center rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
                       >
                         Abrir no mapa 3D

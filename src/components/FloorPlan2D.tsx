@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { snapToGrid, type AssetKind, type Patrimonio, type Sala } from "@/lib/asset-store";
+import { clampToCell, type AssetKind, type Patrimonio, type Sala } from "@/lib/asset-store";
 
 interface Props {
   sala: Sala;
@@ -66,6 +66,14 @@ export function FloorPlan2D({ sala, assets, selectedId, canDrag, onSelect, onRel
   const h = sala.profundidade + pad * 2;
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ id: string; x: number; z: number } | null>(null);
+  const gesture = useRef<{
+    id: string;
+    x: number;
+    z: number;
+    startX: number;
+    startY: number;
+    armed: boolean;
+  } | null>(null);
 
   const toRoom = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -79,28 +87,41 @@ export function FloorPlan2D({ sala, assets, selectedId, canDrag, onSelect, onRel
     return { x: vx - pad - sala.largura / 2, z: vy - pad - sala.profundidade / 2 };
   };
 
-  const clamp = (v: number, limit: number) => Math.max(-limit, Math.min(limit, v));
-
   const onPointerDown = (e: React.PointerEvent, a: Patrimonio) => {
     onSelect(a.id);
     if (!canDrag) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    setDrag({ id: a.id, x: a.x, z: a.z });
+    gesture.current = {
+      id: a.id,
+      x: a.x,
+      z: a.z,
+      startX: e.clientX,
+      startY: e.clientY,
+      armed: false,
+    };
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!drag) return;
+    const g = gesture.current;
+    if (!g) return;
+    if (!g.armed && Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 5) return;
+    g.armed = true;
     const p = toRoom(e.clientX, e.clientY);
     if (!p) return;
-    setDrag({
-      id: drag.id,
-      x: clamp(snapToGrid(p.x), sala.largura / 2 - 0.5),
-      z: clamp(snapToGrid(p.z), sala.profundidade / 2 - 0.5),
-    });
+    const cell = clampToCell(sala, p.x, p.z);
+    g.x = cell.x;
+    g.z = cell.z;
+    setDrag({ id: g.id, x: cell.x, z: cell.z });
   };
 
   const endDrag = () => {
-    if (drag) onRelocate(drag.id, drag.x, drag.z);
+    const g = gesture.current;
+    gesture.current = null;
+    if (g?.armed) {
+      const original = assets.find((a) => a.id === g.id);
+      const moved = !original || Math.abs(original.x - g.x) > 0.01 || Math.abs(original.z - g.z) > 0.01;
+      if (moved) onRelocate(g.id, g.x, g.z);
+    }
     setDrag(null);
   };
 

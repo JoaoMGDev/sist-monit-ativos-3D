@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { useAuth } from "./auth";
 
 /** Permissões granulares por usuário (camada de MVP persistida localmente). */
 export interface Permissoes {
@@ -78,4 +79,12 @@ export const permissoes = {
 
 export function usePermissoesMap() {
   return useSyncExternalStore(permissoes.subscribe, permissoes.get, permissoes.get);
+}
+
+/** Permissões do usuário logado. Enquanto a sessão carrega, nada é liberado. */
+export function useMinhasPermissoes(): Permissoes {
+  const { user, role, loading } = useAuth();
+  const map = usePermissoesMap();
+  if (loading || !user) return NENHUMA;
+  return map[user.id] ?? (role === "admin" ? TODAS : NENHUMA);
 }

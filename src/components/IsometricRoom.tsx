@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { snapToGrid, type Patrimonio, type Sala } from "@/lib/asset-store";
+import { clampToCell, type Patrimonio, type Sala } from "@/lib/asset-store";
 import { settings, useSettings } from "@/lib/settings";
 
 const STATUS_COLOR = {
@@ -65,6 +65,7 @@ export function IsometricRoom({
     sync: (assets: Patrimonio[], selectedId: string | null) => void;
     focus: (id: string) => void;
     setDrag: (v: boolean) => void;
+    setTheme: (dark: boolean) => void;
     rotate: (dir: 1 | -1) => void;
     handlers: {
       onSelect: Props["onSelect"];
@@ -115,7 +116,7 @@ export function IsometricRoom({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     mount.appendChild(renderer.domElement);
 
     // Iluminação suave e difusa
@@ -395,7 +396,8 @@ export function IsometricRoom({
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const hit = new THREE.Vector3();
     let canDragRef = canDrag;
-    let dragging: { id: string; from: THREE.Vector2 } | null = null;
+    let dragging: { id: string; from: THREE.Vector2; startX: number; startY: number; moved: boolean } | null =
+      null;
     let panning: { x: number; y: number } | null = null;
     const handlers = { onSelect, onRelocate, onBlocked, onContextMenu, onContextEmpty };
 
@@ -417,9 +419,6 @@ export function IsometricRoom({
       return raycaster.ray.intersectPlane(plane, hit) ? hit.clone() : null;
     };
 
-    const clampCell = (v: number, limit: number) =>
-      THREE.MathUtils.clamp(snapToGrid(v), -limit + 0.5, limit - 0.5);
-
     /** Trava anti-sobreposição: uma célula da grade só aceita um ativo. */
     const cellOccupied = (id: string, x: number, z: number) =>
       currentAssets.some(
@@ -434,7 +433,7 @@ export function IsometricRoom({
         handlers.onSelect(id);
         if (canDragRef && e.button === 0) {
           const entry = entries.get(id)!;
-          dragging = { id, from: entry.desired.clone() };
+          dragging = { id, from: entry.desired.clone(), startX: e.clientX, startY: e.clientY, moved: false };
           snapMarker.visible = true;
           renderer.domElement.setPointerCapture(e.pointerId);
           renderer.domElement.style.cursor = "grabbing";
@@ -450,12 +449,13 @@ export function IsometricRoom({
     const onPointerMove = (e: PointerEvent) => {
       setPointer(e);
       if (dragging) {
+        if (!dragging.moved && Math.hypot(e.clientX - dragging.startX, e.clientY - dragging.startY) < 5) return;
+        dragging.moved = true;
         const gp = groundPoint();
         if (!gp) return;
         const entry = entries.get(dragging.id);
         if (!entry) return;
-        const x = clampCell(gp.x, sala.largura / 2);
-        const z = clampCell(gp.z, sala.profundidade / 2);
+        const { x, z } = clampToCell(sala, gp.x, gp.z);
         entry.desired.set(x, z);
         snapMarker.position.set(x, 0.006, z);
         const blocked = cellOccupied(dragging.id, x, z);
@@ -481,8 +481,14 @@ export function IsometricRoom({
       if (dragging) {
         const entry = entries.get(dragging.id);
         if (entry) {
-          const { x, y: z } = { x: entry.desired.x, y: entry.desired.y };
-          if (cellOccupied(dragging.id, x, z)) {
+          const x = entry.desired.x;
+          const z = entry.desired.y;
+          const moved =
+            dragging.moved &&
+            (Math.abs(x - dragging.from.x) > 0.01 || Math.abs(z - dragging.from.y) > 0.01);
+          if (!moved) {
+            entry.desired.copy(dragging.from);
+          } else if (cellOccupied(dragging.id, x, z)) {
             entry.desired.copy(dragging.from);
             handlers.onBlocked?.(dragging.id);
           } else {
@@ -513,8 +519,7 @@ export function IsometricRoom({
       // clique com botão direito no chão (grade vazia)
       const gp = groundPoint();
       if (!gp) return;
-      const x = clampCell(gp.x, sala.largura / 2);
-      const z = clampCell(gp.z, sala.profundidade / 2);
+      const { x, z } = clampToCell(sala, gp.x, gp.z);
       handlers.onSelect(null);
       handlers.onContextEmpty?.(x, z, e.clientX, e.clientY);
     };
@@ -577,6 +582,12 @@ export function IsometricRoom({
       setDrag: (v) => {
         canDragRef = v;
       },
+      setTheme: (dark: boolean) => {
+        scene.background = new THREE.Color(dark ? "#171a21" : "#f4f5f7");
+        (floor.material as THREE.MeshStandardMaterial).color.set(dark ? "#22262e" : "#ffffff");
+        gridMat.color.set(dark ? "#3a404c" : "#dfe3e9");
+        wallMat.color.set(dark ? "#2c313b" : "#e9ecf1");
+      },
       rotate: (dir) => {
         yawTarget += (dir * Math.PI) / 2;
       },
@@ -623,8 +634,9 @@ export function IsometricRoom({
   }, [canDrag]);
   useEffect(() => {
     applyStatusColors();
+    api.current?.setTheme(cores.tema === "escuro");
     api.current?.sync(assets, selectedId);
-  }, [assets, selectedId, cores.corOnline, cores.corOffline]);
+  }, [assets, selectedId, cores.corOnline, cores.corOffline, cores.tema]);
   useEffect(() => {
     if (focusId) api.current?.focus(focusId);
   }, [focusId]);
