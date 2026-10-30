@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Boxes, Loader2 } from "lucide-react";
+import { AuthSplash } from "@/components/AuthSplash";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [busy, setBusy] = useState(false);
+  const [entering, setEntering] = useState(false);
   const [checking, setChecking] = useState(true);
 
   const next = typeof window !== "undefined" ? sanitizeNext(new URLSearchParams(window.location.search).get("next")) : "/";
@@ -52,14 +54,15 @@ function AuthPage() {
   }, [next]);
 
   const entrar = async () => {
+    if (busy) return;
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: senha });
-    setBusy(false);
     if (error) {
+      setBusy(false);
       toast("Não foi possível entrar", { description: error.message });
       return;
     }
-    navigate({ to: next as never });
+    setEntering(true);
   };
 
   const cadastrar = async () => {
@@ -104,6 +107,10 @@ function AuthPage() {
     if (result.redirected) return;
     window.location.replace(next);
   };
+
+  if (entering) {
+    return <AuthSplash onDone={() => navigate({ to: next as never })} />;
+  }
 
   if (checking) {
     return (
@@ -162,13 +169,20 @@ function AuthPage() {
                 type="password"
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (tab === "entrar" ? entrar() : cadastrar())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy) void (tab === "entrar" ? entrar() : cadastrar());
+                }}
                 placeholder="••••••••"
               />
             </div>
-            <Button disabled={busy} onClick={() => (tab === "entrar" ? entrar() : cadastrar())}>
-              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {tab === "entrar" ? "Entrar" : "Criar conta"}
+            <Button
+              disabled={busy}
+              aria-busy={busy}
+              className="disabled:opacity-100"
+              onClick={() => (tab === "entrar" ? void entrar() : void cadastrar())}
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {busy && tab === "entrar" ? "Entrando…" : tab === "entrar" ? "Entrar" : "Criar conta"}
             </Button>
 
             <div className="relative py-1 text-center">
