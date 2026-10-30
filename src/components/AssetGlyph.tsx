@@ -1,9 +1,65 @@
 import type { AssetKind, Status } from "@/lib/asset-store";
 
 /**
- * Ilustração isométrica estática (SVG) usada na planta 2D e no modal de detalhes.
- * Desenhada com as mesmas proporções low-poly dos modelos 3D.
+ * Ícone isométrico do equipamento no detalhe do inventário.
+ * As faces saem da mesma projeção, para a aresta, a gaveta e o LED
+ * coincidirem em vez de parecerem traços soltos.
  */
+type V = [number, number, number];
+
+const SCALE = 1.18;
+
+function project(x: number, y: number, z: number): [number, number] {
+  return [50 + (x - z) * SCALE, 86 - y * SCALE + (x + z) * SCALE * 0.5];
+}
+
+function points(vs: V[]) {
+  return vs
+    .map(([x, y, z]) => {
+      const [X, Y] = project(x, y, z);
+      return `${X.toFixed(2)},${Y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function Cuboid({
+  x,
+  y,
+  z,
+  w,
+  h,
+  d,
+  front,
+  side,
+  top,
+}: {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+  h: number;
+  d: number;
+  front: string;
+  side: string;
+  top: string;
+}) {
+  const x1 = x + w;
+  const y1 = y + h;
+  const z1 = z + d;
+  return (
+    <g>
+      <polygon points={points([[x1, y, z], [x1, y, z1], [x1, y1, z1], [x1, y1, z]])} fill={side} />
+      <polygon points={points([[x, y, z1], [x1, y, z1], [x1, y1, z1], [x, y1, z1]])} fill={front} />
+      <polygon points={points([[x, y1, z], [x1, y1, z], [x1, y1, z1], [x, y1, z1]])} fill={top} />
+    </g>
+  );
+}
+
+function Led({ x, y, z, cor }: { x: number; y: number; z: number; cor: string }) {
+  const [cx, cy] = project(x, y, z);
+  return <circle cx={cx} cy={cy} r="1.7" fill={cor} stroke="none" />;
+}
+
 export function AssetGlyph({
   tipo,
   status,
@@ -16,65 +72,144 @@ export function AssetGlyph({
   showBase?: boolean;
 }) {
   const cor = status === "offline" ? "var(--status-offline)" : "var(--status-online)";
-  const corpo = "var(--color-card)";
-  const linha = "var(--color-primary)";
+  const front = "var(--color-card)";
+  const side = "color-mix(in srgb, var(--color-foreground) 10%, var(--color-card))";
+  const top = "color-mix(in srgb, var(--color-foreground) 5%, var(--color-muted))";
+  const slot = "color-mix(in srgb, var(--color-foreground) 16%, var(--color-card))";
+  const edge = "color-mix(in srgb, var(--color-foreground) 28%, var(--color-border))";
+
+  const box = { front, side, top };
 
   return (
     <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label={`${tipo} ${status}`}>
-      {showBase && (
-        <polygon points="50,20 92,44 50,68 8,44" fill="var(--color-muted)" stroke="var(--color-border)" strokeWidth="1" />
-      )}
-      <g stroke={linha} strokeWidth="1.4" strokeLinejoin="round">
+      {showBase && <ellipse cx="50" cy="84" rx="30" ry="7" fill="var(--color-foreground)" opacity="0.08" />}
+      <g stroke={edge} strokeWidth="1.15" strokeLinejoin="round" strokeLinecap="round">
         {tipo === "servidor" && (
           <>
-            <polygon points="50,14 76,29 76,63 50,78 24,63 24,29" fill={corpo} />
-            <polygon points="50,14 76,29 50,44 24,29" fill={cor} opacity="0.5" />
-            {[0, 1, 2].map((i) => (
-              <g key={i}>
-                <line x1="28" y1={40 + i * 9} x2="48" y2={52 + i * 9} />
-                <circle cx="70" cy={41 + i * 9} r="2.2" fill={cor} stroke="none" />
-              </g>
+            <Cuboid x={-11} y={2} z={-7} w={22} h={46} d={14} {...box} />
+            {[0, 1, 2, 3, 4].map((i) => (
+              <polygon
+                key={i}
+                points={points([
+                  [-8, 8 + i * 8, 7.15],
+                  [6, 8 + i * 8, 7.15],
+                  [6, 12.2 + i * 8, 7.15],
+                  [-8, 12.2 + i * 8, 7.15],
+                ])}
+                fill={slot}
+              />
+            ))}
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Led key={i} x={8.2} y={10.1 + i * 8} z={7.4} cor={cor} />
             ))}
           </>
         )}
 
         {tipo === "switch" && (
           <>
-            <polygon points="50,34 84,52 50,70 16,52" fill={corpo} />
-            <polygon points="16,52 50,70 50,78 16,60" fill={cor} opacity="0.55" />
-            <polygon points="50,70 84,52 84,60 50,78" fill={corpo} />
-            {[0, 1, 2, 3].map((i) => (
-              <circle key={i} cx={38 + i * 9} cy={58 + i * 0} r="1.8" fill={cor} stroke="none" />
+            <Cuboid x={-20} y={4} z={-8} w={40} h={10} d={16} {...box} />
+            {Array.from({ length: 8 }, (_, i) => (
+              <polygon
+                key={i}
+                points={points([
+                  [-16 + i * 4.2, 6.2, 8.2],
+                  [-13.4 + i * 4.2, 6.2, 8.2],
+                  [-13.4 + i * 4.2, 11.2, 8.2],
+                  [-16 + i * 4.2, 11.2, 8.2],
+                ])}
+                fill={slot}
+              />
             ))}
+            <Led x={16.4} y={9} z={8.4} cor={cor} />
           </>
         )}
 
         {tipo === "notebook" && (
           <>
-            <polygon points="50,52 82,70 50,88 18,70" fill={corpo} />
-            <polygon points="30,60 58,44 82,58 54,74" fill={cor} opacity="0.5" />
-            <polygon points="30,60 32,36 60,22 58,44" fill={corpo} />
+            <Cuboid x={-16} y={0} z={-10} w={32} h={4.5} d={22} {...box} />
+            <polygon
+              points={points([
+                [-11, 4.6, -2],
+                [11, 4.6, -2],
+                [11, 4.6, 8],
+                [-11, 4.6, 8],
+              ])}
+              fill={slot}
+            />
+            <polygon
+              points={points([
+                [-16, 4.5, -10],
+                [16, 4.5, -10],
+                [16, 28, -18],
+                [-16, 28, -18],
+              ])}
+              fill={side}
+            />
+            <polygon
+              points={points([
+                [-13, 8, -12.2],
+                [13, 8, -12.2],
+                [13, 25.5, -18.6],
+                [-13, 25.5, -18.6],
+              ])}
+              fill={cor}
+              opacity="0.9"
+            />
+            <Led x={12} y={2.4} z={11.2} cor={cor} />
           </>
         )}
 
         {tipo === "impressora" && (
           <>
-            <polygon points="50,40 82,58 50,76 18,58" fill={corpo} />
-            <polygon points="18,58 50,76 50,86 18,68" fill={cor} opacity="0.5" />
-            <polygon points="50,76 82,58 82,68 50,86" fill={corpo} />
-            <polygon points="38,36 62,36 70,42 46,42" fill={corpo} />
+            <Cuboid x={-16} y={0} z={-10} w={32} h={16} d={20} {...box} />
+            <Cuboid x={-10} y={16} z={-8} w={20} h={7} d={12} front={side} side={side} top={top} />
+            <polygon
+              points={points([
+                [-12, 16.1, -4],
+                [12, 16.1, -4],
+                [12, 16.1, 6],
+                [-12, 16.1, 6],
+              ])}
+              fill="color-mix(in srgb, white 70%, var(--color-card))"
+            />
+            <polygon
+              points={points([
+                [-12, 6, 10.2],
+                [8, 6, 10.2],
+                [8, 9, 10.2],
+                [-12, 9, 10.2],
+              ])}
+              fill={slot}
+            />
+            <Led x={11} y={11} z={10.4} cor={cor} />
           </>
         )}
 
         {tipo === "desktop" && (
           <>
-            <polygon points="50,46 86,66 50,86 14,66" fill={corpo} />
-            <line x1="14" y1="66" x2="14" y2="74" />
-            <line x1="86" y1="66" x2="86" y2="74" />
-            <polygon points="40,38 56,30 74,40 58,48" fill={cor} opacity="0.5" />
-            <polygon points="40,38 40,54 58,64 58,48" fill={corpo} />
-            <polygon points="58,48 74,40 74,56 58,64" fill={corpo} />
-            <circle cx="66" cy="49" r="2" fill={cor} stroke="none" />
+            <Cuboid x={-18} y={0} z={-6} w={9} h={22} d={12} {...box} />
+            <Led x={-13.4} y={5.5} z={6.3} cor={cor} />
+            <Cuboid x={-5} y={8} z={-4} w={22} h={18} d={2.4} {...box} />
+            <polygon
+              points={points([
+                [-2.2, 11.2, -1.5],
+                [14.2, 11.2, -1.5],
+                [14.2, 23.2, -1.5],
+                [-2.2, 23.2, -1.5],
+              ])}
+              fill={cor}
+              opacity="0.9"
+            />
+            <polygon
+              points={points([
+                [4.2, 3, -3.2],
+                [7.2, 3, -3.2],
+                [7.2, 8, -2.8],
+                [4.2, 8, -2.8],
+              ])}
+              fill={side}
+            />
+            <Cuboid x={-3} y={0} z={3} w={18} h={1.6} d={8} front={slot} side={side} top={top} />
           </>
         )}
       </g>
