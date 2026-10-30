@@ -125,9 +125,6 @@ function AuthPage() {
           <h1 className="text-lg font-semibold tracking-tight">
             {tab === "entrar" ? "Acessar plataforma" : "Criar conta"}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Gestão de ativos de TI com mapeamento isométrico 3D.
-          </p>
 
           <div className="mt-5 flex rounded-md border border-border p-0.5 text-sm">
             {(["entrar", "cadastrar"] as const).map((t) => (
@@ -184,10 +181,6 @@ function AuthPage() {
             </Button>
           </div>
         </div>
-
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          O primeiro usuário cadastrado recebe o perfil de Administrador.
-        </p>
       </div>
     </div>
   );
