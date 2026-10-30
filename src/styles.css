@@ -163,6 +163,27 @@
   }
 }
 
+/* Barra da passagem de login. Uma ida só, curta, e some em reduced motion. */
+@keyframes auth-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.auth-fill {
+  transform-origin: left center;
+  animation: auth-fill 0.55s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-fill {
+    animation-duration: 0.01ms;
+  }
+}
+
 /* Barra de rolagem enxuta e moderna, usada nos painéis internos. */
 @utility scroll-slim {
   scrollbar-width: thin;
